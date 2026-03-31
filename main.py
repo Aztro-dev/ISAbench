@@ -6,7 +6,7 @@ from gem5.components.boards.simple_board import SimpleBoard
 from gem5.components.cachehierarchies.classic.private_l1_shared_l2_cache_hierarchy import (
     PrivateL1SharedL2CacheHierarchy,
 )
-from gem5.resources.resource import CustomResource
+from gem5.resources.resource import AbstractResource
 from gem5.simulate.simulator import Simulator
 
 
@@ -108,7 +108,7 @@ def main():
         workload = get_workload(args.binary)
         board.set_workload(workload)
     else:
-        binary_path = CustomResource(args.binary)  # Unused for now
+        binary_path = AbstractResource(args.binary)  # Unused for now
         board.set_se_binary_workload(binary_path)
 
     # Run dat sim
