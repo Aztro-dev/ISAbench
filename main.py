@@ -6,7 +6,7 @@ from gem5.components.boards.simple_board import SimpleBoard
 from gem5.components.cachehierarchies.classic.private_l1_shared_l2_cache_hierarchy import (
     PrivateL1SharedL2CacheHierarchy,
 )
-from gem5.resources.resource import AbstractResource
+from gem5.resources.resource import BinaryResource
 from gem5.simulate.simulator import Simulator
 
 
@@ -76,7 +76,7 @@ def main():
     parser.add_argument(
         "--binary",
         type=str,
-        required=False,
+        required=True,
         help="Path to your compiled benchmark binary",
     )
     args = parser.parse_args()
@@ -104,12 +104,9 @@ def main():
         cache_hierarchy=cache_hierarchy,
     )
 
-    if args.binary is None:
-        workload = get_workload(args.binary)
-        board.set_workload(workload)
-    else:
-        binary_path = AbstractResource(args.binary)  # Unused for now
-        board.set_se_binary_workload(binary_path)
+    binary_resource = BinaryResource(args.binary)
+    # Arguments: 2^10 vertices, ran one time
+    board.set_se_binary_workload(binary_resource, arguments=["-g", "10", "-n", "1"])
 
     # Run dat sim
     print("--- Starting Simulation ---")
@@ -122,8 +119,6 @@ def main():
 
     print("--- Simulation Complete ---")
     print(f"Simulated ticks: {simulator.get_current_tick()}")
-
-    sim_stats = simulator.get_stats()
 
 
 main()
