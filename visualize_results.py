@@ -6,138 +6,100 @@ import numpy as np
 
 # --- Configuration ---
 INPUT_CSV = "gem5_gapbs_results.csv"
-SAVE_PREFIX = "gem5_plot_"
-
+SAVE_PREFIX = "analysis_"
+# Setting the baseline for normalization
+BASELINE_ISA = "x86"
+BASELINE_CPU = "in-order" 
 
 def load_and_clean_data(file_path):
     df = pd.read_csv(file_path)
-    # Convert N/A to NaN and ensure numeric columns are floats
-    numeric_cols = [
-        "Sim_Seconds",
-        "Sim_Insts",
-        "IPC",
-        "L1D_Miss_Rate",
-        "L1D_Avg_Miss_Lat",
-        "Branch_Mispred",
-    ]
-    for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+    # Ensure numeric types
+    cols = ["Sim_Seconds", "Sim_Insts", "IPC", "L1D_Miss_Rate", "L2_Miss_Rate", "Branch_Mispred"]
+    for col in cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
     return df
 
-
-def normalize_data(df, baseline_isa="x86", baseline_cpu="o3"):
-    """Normalizes Sim_Seconds relative to the baseline for each Binary."""
-    normalized_dfs = []
-
-    for binary in df["Binary"].unique():
-        bin_df = df[df["Binary"] == binary].copy()
-        # Find the baseline value for this binary
-        baseline_val = bin_df[
-            (bin_df["ISA"] == baseline_isa) & (bin_df["CPU_Type"] == baseline_cpu)
-        ]["Sim_Seconds"]
-
-        if not baseline_val.empty:
-            base = baseline_val.values[0]
-            bin_df["Normalized_Runtime"] = bin_df["Sim_Seconds"] / base
-            # Speedup is 1/Runtime, but normalized runtime is usually better for bottlenecks
-            normalized_dfs.append(bin_df)
-
-    return pd.concat(normalized_dfs) if normalized_dfs else df
-
+def normalize_to_baseline(df):
+    """Normalizes performance metrics to the x86 In-Order configuration."""
+    normalized_list = []
+    for binary in df['Binary'].unique():
+        bin_subset = df[df['Binary'] == binary].copy()
+        # Find the baseline value for this specific benchmark
+        base_row = bin_subset[(bin_subset['ISA'] == BASELINE_ISA) & 
+                              (bin_subset['CPU_Type'] == BASELINE_CPU)]
+        
+        if not base_row.empty:
+            base_time = base_row['Sim_Seconds'].values[0]
+            base_insts = base_row['Sim_Insts'].values[0]
+            
+            bin_subset['Rel_Runtime'] = bin_subset['Sim_Seconds'] / base_time
+            bin_subset['Rel_Inst_Count'] = bin_subset['Sim_Insts'] / base_insts
+            normalized_list.append(bin_subset)
+    
+    return pd.concat(normalized_list) if normalized_list else df
 
 def main():
-    try:
-        df = load_and_clean_data(INPUT_CSV)
-    except FileNotFoundError:
-        print(f"Error: {INPUT_CSV} not found. Please run the extraction script first.")
-        return
+    df_raw = load_and_clean_data(INPUT_CSV)
+    df = normalize_to_baseline(df_raw)
+    sns.set_theme(style="whitegrid", palette="muted")
 
-    df = normalize_data(df)
-    sns.set_theme(style="whitegrid")
+    # ==========================================
+    # 1. 2D GRAPH SUITE: THE "DIFFERENCE" VIEWS
+    # ==========================================
 
-    # --- Plot 1: Normalized Execution Time (Grouped Bar) ---
+    # GRAPH A: Normalized Execution Time (The Big Picture)
     plt.figure(figsize=(12, 6))
-    sns.barplot(data=df, x="Binary", y="Normalized_Runtime", hue="ISA")
-    plt.axhline(1, color="red", linestyle="--", label="x86 Baseline")
-    plt.title("Execution Time Normalized to x86 (Lower is Better)")
-    plt.ylabel("Relative Execution Time")
-    plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
-    plt.tight_layout()
-    plt.savefig(f"{SAVE_PREFIX}normalized_runtime.png")
-    print(f"Saved: {SAVE_PREFIX}normalized_runtime.png")
+    sns.barplot(data=df[df['CPU_Type'] == 'in-order'], x="Binary", y="Rel_Runtime", hue="ISA")
+    plt.axhline(1, color='black', linestyle='--', label=f'{BASELINE_ISA} {BASELINE_CPU} Baseline')
+    plt.title(f"In-Order Performance Relative to {BASELINE_ISA} (Lower is Better)")
+    plt.ylabel("Relative Runtime")
+    plt.legend(title="ISA", bbox_to_anchor=(1, 1))
+    plt.savefig(f"{SAVE_PREFIX}2d_rel_performance.png")
 
-    # --- Plot 2: IPC vs Memory Efficiency (Scatter) ---
+    # GRAPH B: The Instruction "Tax" (CISC vs RISC)
+    # Shows if an ISA needs more instructions to do the same work
+    plt.figure(figsize=(12, 6))
+    sns.barplot(data=df[df['CPU_Type'] == 'in-order'], x="Binary", y="Rel_Inst_Count", hue="ISA")
+    plt.title("Instruction Count Comparison (Normalized to x86)")
+    plt.ylabel("Relative Number of Instructions")
+    plt.savefig(f"{SAVE_PREFIX}2d_instruction_tax.png")
+
+    # GRAPH C: IPC Comparison
+    plt.figure(figsize=(12, 6))
+    sns.boxplot(data=df, x="ISA", y="IPC", hue="CPU_Type")
+    plt.title("IPC Distribution: In-Order vs. O3 across all Benchmarks")
+    plt.savefig(f"{SAVE_PREFIX}2d_ipc_comparison.png")
+
+    # GRAPH D: Cache Bottleneck Analysis
     plt.figure(figsize=(10, 6))
-    sns.scatterplot(
-        data=df, x="L1D_Miss_Rate", y="IPC", hue="ISA", style="CPU_Type", s=100
-    )
-    plt.title("Performance vs. Cache Efficiency")
-    plt.xlabel("L1 Data Cache Miss Rate")
-    plt.ylabel("Instructions Per Cycle (IPC)")
-    plt.savefig(f"{SAVE_PREFIX}ipc_vs_cache.png")
-    print(f"Saved: {SAVE_PREFIX}ipc_vs_cache.png")
+    sns.scatterplot(data=df, x="L1D_Miss_Rate", y="IPC", hue="ISA", style="CPU_Type", s=100)
+    plt.title("Efficiency: How Cache Misses Impact Throughput (IPC)")
+    plt.savefig(f"{SAVE_PREFIX}2d_cache_vs_ipc.png")
 
-    # --- Plot 3: 3D Scatter Plot (IPC, Miss Rate, Runtime) ---
-    # This helps visualize how these three variables interact across ISAs
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111, projection="3d")
+    # ==========================================
+    # 2. 3D GRAPH SUITE: MULTI-VARIABLE TRENDS
+    # ==========================================
 
-    colors = {
-        "x86": "blue",
-        "arm": "green",
-        "riscv": "red",
-        "sparc": "orange",
-        "power": "purple",
-        "mips": "brown",
-    }
+    # 3D SCATTER: Runtime, IPC, and Cache Misses
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Mapping ISAs to specific colors for consistency
+    colors = {'x86': 'blue', 'arm': 'green', 'riscv': 'red', 'sparc': 'orange', 'power': 'purple', 'mips': 'brown'}
+    
+    for isa in df['ISA'].unique():
+        sub = df[(df['ISA'] == isa) & (df['CPU_Type'] == 'in-order')]
+        ax.scatter(sub['L1D_Miss_Rate'], sub['IPC'], sub['Rel_Runtime'], 
+                   label=isa, s=80, edgecolors='w', color=colors.get(isa, 'grey'))
 
-    for isa in df["ISA"].unique():
-        subset = df[df["ISA"] == isa]
-        ax.scatter(
-            subset["L1D_Miss_Rate"],
-            subset["IPC"],
-            subset["Sim_Seconds"],
-            label=isa,
-            s=60,
-            color=colors.get(isa, "black"),
-        )
-
-    ax.set_xlabel("L1D Miss Rate")
-    ax.set_ylabel("IPC")
-    ax.set_zlabel("Sim Seconds")
-    ax.set_title("3D Performance Landscape")
+    ax.set_xlabel('L1D Miss Rate')
+    ax.set_ylabel('IPC')
+    ax.set_zlabel('Relative Runtime')
+    plt.title("3D Efficiency Landscape (In-Order Only)")
     plt.legend()
     plt.savefig(f"{SAVE_PREFIX}3d_landscape.png")
-    print(f"Saved: {SAVE_PREFIX}3d_landscape.png")
 
-    # --- Plot 4: 3D Bar Chart (ISA vs Binary vs Runtime) ---
-    # This provides a cool "cityscape" view of your results
-    fig = plt.figure(figsize=(12, 8))
-    ax = fig.add_subplot(111, projection="3d")
-
-    # Mapping categories to numbers for the 3D axes
-    isas = df["ISA"].unique()
-    bins = df["Binary"].unique()
-    isa_map = {name: i for i, name in enumerate(isas)}
-    bin_map = {name: i for i, name in enumerate(bins)}
-
-    for _, row in df.iterrows():
-        x = isa_map[row["ISA"]]
-        y = bin_map[row["Binary"]]
-        z = 0
-        dx = dy = 0.5
-        dz = row["Normalized_Runtime"]
-        ax.bar3d(x, y, z, dx, dy, dz, color=colors.get(row["ISA"], "blue"), alpha=0.8)
-
-    ax.set_xticks(np.arange(len(isas)) + 0.25)
-    ax.set_xticklabels(isas)
-    ax.set_yticks(np.arange(len(bins)) + 0.25)
-    ax.set_yticklabels(bins)
-    ax.set_zlabel("Normalized Runtime")
-    ax.set_title("ISA Performance Overview (3D Bar)")
-    plt.savefig(f"{SAVE_PREFIX}3d_bars.png")
-    print(f"Saved: {SAVE_PREFIX}3d_bars.png")
-
+    print("All 2D and 3D graphs have been generated.")
 
 if __name__ == "__main__":
     main()
