@@ -1,105 +1,144 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
+import os
+from mpl_toolkits.mplot3d import Axes3D
 
-# --- Configuration ---
+# Comprehensive visualization script for gem5 GAPBS results
 INPUT_CSV = "gem5_gapbs_results.csv"
-SAVE_PREFIX = "analysis_"
-# Setting the baseline for normalization
-BASELINE_ISA = "x86"
-BASELINE_CPU = "in-order" 
 
-def load_and_clean_data(file_path):
-    df = pd.read_csv(file_path)
-    # Ensure numeric types
-    cols = ["Sim_Seconds", "Sim_Insts", "IPC", "L1D_Miss_Rate", "L2_Miss_Rate", "Branch_Mispred"]
-    for col in cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-    return df
 
-def normalize_to_baseline(df):
-    """Normalizes performance metrics to the x86 In-Order configuration."""
-    normalized_list = []
-    for binary in df['Binary'].unique():
-        bin_subset = df[df['Binary'] == binary].copy()
-        # Find the baseline value for this specific benchmark
-        base_row = bin_subset[(bin_subset['ISA'] == BASELINE_ISA) & 
-                              (bin_subset['CPU_Type'] == BASELINE_CPU)]
-        
-        if not base_row.empty:
-            base_time = base_row['Sim_Seconds'].values[0]
-            base_insts = base_row['Sim_Insts'].values[0]
-            
-            bin_subset['Rel_Runtime'] = bin_subset['Sim_Seconds'] / base_time
-            bin_subset['Rel_Inst_Count'] = bin_subset['Sim_Insts'] / base_insts
-            normalized_list.append(bin_subset)
-    
-    return pd.concat(normalized_list) if normalized_list else df
+def run_comprehensive_analysis():
+    if not os.path.exists(INPUT_CSV):
+        print(f"Error: {INPUT_CSV} not found.")
+        return
 
-def main():
-    df_raw = load_and_clean_data(INPUT_CSV)
-    df = normalize_to_baseline(df_raw)
+    df = pd.read_csv(INPUT_CSV).replace("N/A", np.nan)
+
+    # Pre-processing and Scaling
+    numeric_cols = [
+        "Sim_Seconds",
+        "Sim_Insts",
+        "Host_Inst_Rate",
+        "IPC",
+        "L1D_Miss_Rate",
+        "L1D_Avg_Miss_Lat",
+        "Branch_Mispred",
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df["Sim_Insts_M"] = df["Sim_Insts"] / 1e6
+    df["Host_Inst_Rate_M"] = df["Host_Inst_Rate"] / 1e6
+
+    # 1. Relative Speedup Calculation (Baseline: x86 In-Order)
+    baselines = df[(df["ISA"] == "x86") & (df["CPU_Type"] == "in-order")].set_index(
+        "Binary"
+    )["Sim_Seconds"]
+    df["Speedup"] = df.apply(
+        lambda r: (
+            baselines.get(r["Binary"]) / r["Sim_Seconds"]
+            if baselines.get(r["Binary"])
+            else np.nan
+        ),
+        axis=1,
+    )
+
+    # 2. Power Efficiency (if energy columns exist)
+    if "Mem_Energy_0" in df.columns and "Mem_Energy_1" in df.columns:
+        df["Total_Energy_mJ"] = (
+            pd.to_numeric(df["Mem_Energy_0"], errors="coerce").fillna(0)
+            + pd.to_numeric(df["Mem_Energy_1"], errors="coerce").fillna(0)
+        ) / 1e9
+        df["Power_Efficiency"] = df["Sim_Insts"] / df["Total_Energy_mJ"]
+
+    # 3. Branch MPKI
+    if "Branch_Mispred" in df.columns:
+        df["Branch_MPKI"] = (df["Branch_Mispred"] / df["Sim_Insts"]) * 1000
+
     sns.set_theme(style="whitegrid", palette="muted")
 
-    # ==========================================
-    # 1. 2D GRAPH SUITE: THE "DIFFERENCE" VIEWS
-    # ==========================================
-
-    # GRAPH A: Normalized Execution Time (The Big Picture)
+    # GRAPH 1: Relative Speedup (Error bars enabled)
     plt.figure(figsize=(12, 6))
-    sns.barplot(data=df[df['CPU_Type'] == 'in-order'], x="Binary", y="Rel_Runtime", hue="ISA")
-    plt.axhline(1, color='black', linestyle='--', label=f'{BASELINE_ISA} {BASELINE_CPU} Baseline')
-    plt.title(f"In-Order Performance Relative to {BASELINE_ISA} (Lower is Better)")
-    plt.ylabel("Relative Runtime")
-    plt.legend(title="ISA", bbox_to_anchor=(1, 1))
-    plt.savefig(f"{SAVE_PREFIX}2d_rel_performance.png")
+    sns.barplot(data=df, x="Binary", y="Speedup", hue="ISA")
+    plt.axhline(
+        1, color="red", linestyle="--", alpha=0.5, label="x86 In-Order Baseline"
+    )
+    plt.title("Relative Speedup per ISA (Normalized to x86 In-Order)")
+    plt.ylabel("Speedup (x)")
+    plt.xticks(rotation=45)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.tight_layout()
+    plt.savefig("relative_speedup.png")
 
-    # GRAPH B: The Instruction "Tax" (CISC vs RISC)
-    # Shows if an ISA needs more instructions to do the same work
+    # GRAPH 2: Absolute Time (Error bars enabled)
     plt.figure(figsize=(12, 6))
-    sns.barplot(data=df[df['CPU_Type'] == 'in-order'], x="Binary", y="Rel_Inst_Count", hue="ISA")
-    plt.title("Instruction Count Comparison (Normalized to x86)")
-    plt.ylabel("Relative Number of Instructions")
-    plt.savefig(f"{SAVE_PREFIX}2d_instruction_tax.png")
+    sns.barplot(data=df, x="Binary", y="Sim_Seconds", hue="ISA")
+    plt.title("Absolute Simulated Execution Time")
+    plt.ylabel("Simulated Seconds")
+    plt.xticks(rotation=45)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.tight_layout()
+    plt.savefig("absolute_time.png")
 
-    # GRAPH C: IPC Comparison
+    # GRAPH 3: Code Density (Millions)
     plt.figure(figsize=(12, 6))
-    sns.boxplot(data=df, x="ISA", y="IPC", hue="CPU_Type")
-    plt.title("IPC Distribution: In-Order vs. O3 across all Benchmarks")
-    plt.savefig(f"{SAVE_PREFIX}2d_ipc_comparison.png")
+    sns.barplot(data=df, x="Binary", y="Sim_Insts_M", hue="ISA")
+    plt.title("Dynamic Instruction Count (Millions)")
+    plt.ylabel("Instructions (Millions)")
+    plt.xticks(rotation=45)
+    plt.savefig("code_density.png")
 
-    # GRAPH D: Cache Bottleneck Analysis
+    # GRAPH 4: Simulation Speed (NO ERROR BARS)
+    plt.figure(figsize=(12, 6))
+    sns.barplot(data=df, x="Binary", y="Host_Inst_Rate_M", hue="ISA", errorbar=None)
+    plt.title("Simulator Performance (MIPS) - Error Bars Removed")
+    plt.ylabel("Millions of Instructions / Sec")
+    plt.xticks(rotation=45)
+    plt.savefig("sim_speed_mips.png")
+
+    # GRAPH 5: Efficiency (Inst/mJ)
+    if "Power_Efficiency" in df.columns:
+        plt.figure(figsize=(12, 6))
+        sns.barplot(data=df, x="Binary", y="Power_Efficiency", hue="ISA")
+        plt.title("Power Efficiency: Performance per Memory Energy")
+        plt.ylabel("Instructions per mJ")
+        plt.xticks(rotation=45)
+        plt.savefig("power_efficiency.png")
+
+    # GRAPH 6: Scatter Trends (Miss Rate vs IPC)
     plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=df, x="L1D_Miss_Rate", y="IPC", hue="ISA", style="CPU_Type", s=100)
-    plt.title("Efficiency: How Cache Misses Impact Throughput (IPC)")
-    plt.savefig(f"{SAVE_PREFIX}2d_cache_vs_ipc.png")
+    sns.scatterplot(
+        data=df, x="L1D_Miss_Rate", y="IPC", hue="ISA", style="CPU_Type", s=100
+    )
+    plt.title("Architectural Trend: IPC vs. Cache Miss Rate")
+    plt.savefig("ipc_miss_rate_scatter.png")
 
-    # ==========================================
-    # 2. 3D GRAPH SUITE: MULTI-VARIABLE TRENDS
-    # ==========================================
+    # GRAPH 7: 3D System Overview
+    if "Total_Energy_mJ" in df.columns:
+        fig = plt.figure(figsize=(12, 8))
+        ax = fig.add_subplot(111, projection="3d")
+        for isa in df["ISA"].unique():
+            sub = df[df["ISA"] == isa]
+            ax.scatter(
+                sub["L1D_Miss_Rate"],
+                sub["Total_Energy_mJ"],
+                sub["Sim_Seconds"],
+                label=isa,
+                s=80,
+            )
+        ax.set_xlabel("Cache Miss Rate")
+        ax.set_ylabel("Energy (mJ)")
+        ax.set_zlabel("Time (s)")
+        plt.title("3D Multi-Metric Performance Overview")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig("3d_overview.png")
 
-    # 3D SCATTER: Runtime, IPC, and Cache Misses
-    fig = plt.figure(figsize=(12, 8))
-    ax = fig.add_subplot(111, projection='3d')
-    
-    # Mapping ISAs to specific colors for consistency
-    colors = {'x86': 'blue', 'arm': 'green', 'riscv': 'red', 'sparc': 'orange', 'power': 'purple', 'mips': 'brown'}
-    
-    for isa in df['ISA'].unique():
-        sub = df[(df['ISA'] == isa) & (df['CPU_Type'] == 'in-order')]
-        ax.scatter(sub['L1D_Miss_Rate'], sub['IPC'], sub['Rel_Runtime'], 
-                   label=isa, s=80, edgecolors='w', color=colors.get(isa, 'grey'))
+    print("Comprehensive analysis complete. All graphs generated.")
 
-    ax.set_xlabel('L1D Miss Rate')
-    ax.set_ylabel('IPC')
-    ax.set_zlabel('Relative Runtime')
-    plt.title("3D Efficiency Landscape (In-Order Only)")
-    plt.legend()
-    plt.savefig(f"{SAVE_PREFIX}3d_landscape.png")
-
-    print("All 2D and 3D graphs have been generated.")
 
 if __name__ == "__main__":
-    main()
+    run_comprehensive_analysis()
