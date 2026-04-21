@@ -37,3 +37,17 @@ This is due to ARM's high reliance on prefetching, which increases performance i
 Here we can see an trend of high L1D miss rates for RISC ISAs because of their load-store architecture, which requires a larger volume of individual memory access instructions for the same task (1 instruction to load data, x instructions to perform operations on that data, 1 instruction to store that data).
 
 = Discussion
+Ultimately, this study sought to investigate whether the choice of Instruction Set Architecture had a meaningful impact on the performance and efficiency of CPU cores in a variety of different configurations using modern designs, compilers, and benchmarks.
+By creating many simulated models of different CPU configurations, this research was able to quantitatively rank Instruction Set Architectures and show that they still have large differences in performance and efficiency when performing modern workloads.
+This research was also able to qualitatively attribute specific ISA features (such as fixed-width instructions, the existance of flags, the type of memory architecture (load-store vs register-memory), etc.) to simulated performance and efficiency differences.
+
+#parbreak()
+
+These results show that ARM currently has the clear lead in performance and energy efficiency, part of which can be attributed to specific architectural decisions such as fixed-width instructions, a load-store architecture, a greater amount of registers, and more.
+This indicates that the current gain in market share by ARM chips in personal computing (namely, Apple's M-series chips and Qualcomm's Snapdragon X-series chips) is a step in the right direction for the future of the personal computing industry, especially when in cases where high power efficiency is of upmost importance.
+RISC-V also shows promise, especially when considering the results were created with sub-optimal compiler tooling, so further research should be done into RISC-V to see how viable a highly-performant implementation of RISC-V can truly be.
+What these tests clearly show is that current high-profile RISC architectures have glaring advantages over traditional CISC ISAs (x86) despite having had significantly more development time and resources allocated.
+
+#parbreak()
+
+Overall, this study provides evidence that not only does ISA choice impact performance and efficiency, but RISC ISAs typically lead CISC ISAs in these fields.
