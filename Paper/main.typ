@@ -1,7 +1,7 @@
 #import "@preview/charged-ieee:0.1.4": ieee
 
 #show: ieee.with(
-  title: [Quantitative Analyses of the Performance and Efficiency Differences between Popular Instruction Set Architectures],
+  title: [Impact of Instruction Set Architecture on Performance and Energy Efficiency in Modern Computing],
   abstract: [
   ],
   authors: (
