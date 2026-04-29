@@ -2,8 +2,6 @@
 
 #show: ieee.with(
   title: [Impact of Instruction Set Architecture on Performance and Energy Efficiency in Modern Computing],
-  abstract: [
-  ],
   authors: (
   ),
   bibliography: bibliography("refs.bib"),
